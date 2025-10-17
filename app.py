@@ -30,12 +30,17 @@ def get_live_chat_messages(url):
     try:
         chat_downloader = ChatDownloader()
 
-        # Get chat messages
-        chat = chat_downloader.get_chat(url, message_types=['text_message', 'paid_message', 'paid_sticker'])
+        # Get chat messages with additional error handling
+        chat = chat_downloader.get_chat(
+            url,
+            message_types=['text_message', 'paid_message', 'paid_sticker'],
+            max_attempts=3
+        )
 
         messages = []
         video_title = None
         channel_name = None
+        message_count = 0
 
         for message in chat:
             # Extract video info from first message if available
@@ -55,6 +60,13 @@ def get_live_chat_messages(url):
                 'is_chat_moderator': message.get('author', {}).get('is_moderator', False)
             }
             messages.append(message_data)
+            message_count += 1
+
+        # Check if we got any messages
+        if message_count == 0:
+            return {
+                'error': 'No chat messages found. This video may not have chat replay enabled, or chat may have been disabled by the creator.'
+            }
 
         # Get video info
         video_info = {
@@ -70,6 +82,13 @@ def get_live_chat_messages(url):
             'video_info': video_info
         }
 
+    except ValueError as e:
+        error_msg = str(e)
+        if 'Unable to parse' in error_msg:
+            return {
+                'error': 'Unable to access chat data. Please check that: (1) The video is a completed live stream, (2) Chat replay is enabled, (3) The video is not age-restricted or private.'
+            }
+        return {'error': f'Chat download error: {error_msg}'}
     except Exception as e:
         print(f"An error occurred: {str(e)}")
         return {'error': f'Failed to fetch chat: {str(e)}'}
