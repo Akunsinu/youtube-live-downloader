@@ -3,8 +3,7 @@ import csv
 import re
 from io import StringIO, BytesIO
 from flask import Flask, render_template, request, jsonify, send_file
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+from chat_downloader import ChatDownloader
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -12,9 +11,6 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
-
-# YouTube API setup
-YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 
 def extract_video_id(url):
     """Extract video ID from various YouTube URL formats"""
@@ -29,94 +25,54 @@ def extract_video_id(url):
             return match.group(1)
     return None
 
-def get_video_info(video_id):
-    """Get video metadata"""
+def get_live_chat_messages(url):
+    """Fetch live chat messages from a YouTube video using chat-downloader"""
     try:
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+        chat_downloader = ChatDownloader()
 
-        request = youtube.videos().list(
-            part='snippet,liveStreamingDetails',
-            id=video_id
-        )
-        response = request.execute()
-
-        if not response['items']:
-            return None
-
-        video = response['items'][0]
-        return {
-            'title': video['snippet']['title'],
-            'channel': video['snippet']['channelTitle'],
-            'description': video['snippet']['description'],
-            'published_at': video['snippet']['publishedAt']
-        }
-    except HttpError as e:
-        print(f"An HTTP error occurred: {e}")
-        return None
-
-def get_live_chat_messages(video_id):
-    """Fetch live chat messages from a YouTube video"""
-    try:
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-
-        # Get the live chat ID
-        video_response = youtube.videos().list(
-            part='liveStreamingDetails',
-            id=video_id
-        ).execute()
-
-        if not video_response['items']:
-            return {'error': 'Video not found'}
-
-        video = video_response['items'][0]
-
-        # Check if video has live chat
-        if 'liveStreamingDetails' not in video:
-            return {'error': 'This video does not have live chat data'}
-
-        if 'activeLiveChatId' not in video['liveStreamingDetails']:
-            return {'error': 'Live chat is not available for this video'}
-
-        live_chat_id = video['liveStreamingDetails']['activeLiveChatId']
+        # Get chat messages
+        chat = chat_downloader.get_chat(url, message_types=['text_message', 'paid_message', 'paid_sticker'])
 
         messages = []
-        next_page_token = None
+        video_title = None
+        channel_name = None
 
-        # Fetch all chat messages
-        while True:
-            chat_response = youtube.liveChatMessages().list(
-                liveChatId=live_chat_id,
-                part='snippet,authorDetails',
-                maxResults=2000,
-                pageToken=next_page_token
-            ).execute()
+        for message in chat:
+            # Extract video info from first message if available
+            if video_title is None and 'video' in message:
+                video_title = message.get('video', {}).get('title', 'Unknown')
+                channel_name = message.get('video', {}).get('author', 'Unknown')
 
-            for item in chat_response['items']:
-                message_data = {
-                    'timestamp': item['snippet']['publishedAt'],
-                    'author': item['authorDetails']['displayName'],
-                    'message': item['snippet']['displayMessage'],
-                    'author_channel_id': item['authorDetails']['channelId'],
-                    'is_verified': item['authorDetails'].get('isVerified', False),
-                    'is_chat_owner': item['authorDetails'].get('isChatOwner', False),
-                    'is_chat_sponsor': item['authorDetails'].get('isChatSponsor', False),
-                    'is_chat_moderator': item['authorDetails'].get('isChatModerator', False)
-                }
-                messages.append(message_data)
+            # Process message
+            message_data = {
+                'timestamp': message.get('timestamp', 0),
+                'author': message.get('author', {}).get('name', 'Unknown'),
+                'message': message.get('message', ''),
+                'author_channel_id': message.get('author', {}).get('id', ''),
+                'is_verified': message.get('author', {}).get('is_verified', False),
+                'is_chat_owner': message.get('author', {}).get('is_owner', False),
+                'is_chat_sponsor': message.get('author', {}).get('is_member', False),
+                'is_chat_moderator': message.get('author', {}).get('is_moderator', False)
+            }
+            messages.append(message_data)
 
-            next_page_token = chat_response.get('nextPageToken')
-            if not next_page_token:
-                break
+        # Get video info
+        video_info = {
+            'title': video_title or 'Unknown',
+            'channel': channel_name or 'Unknown',
+            'description': '',
+            'published_at': ''
+        }
 
-        return {'messages': messages, 'count': len(messages)}
+        return {
+            'messages': messages,
+            'count': len(messages),
+            'video_info': video_info
+        }
 
-    except HttpError as e:
-        error_content = e.content.decode('utf-8')
-        print(f"An HTTP error occurred: {error_content}")
-        return {'error': f'YouTube API error: {error_content}'}
     except Exception as e:
         print(f"An error occurred: {str(e)}")
-        return {'error': str(e)}
+        return {'error': f'Failed to fetch chat: {str(e)}'}
 
 @app.route('/')
 def index():
@@ -136,21 +92,19 @@ def fetch_chat():
     if not video_id:
         return jsonify({'error': 'Invalid YouTube URL'}), 400
 
-    # Get video info
-    video_info = get_video_info(video_id)
-    if not video_info:
-        return jsonify({'error': 'Could not fetch video information'}), 400
-
     # Get chat messages
-    chat_data = get_live_chat_messages(video_id)
+    chat_result = get_live_chat_messages(url)
 
-    if 'error' in chat_data:
-        return jsonify(chat_data), 400
+    if 'error' in chat_result:
+        return jsonify(chat_result), 400
 
     return jsonify({
         'video_id': video_id,
-        'video_info': video_info,
-        'chat_data': chat_data
+        'video_info': chat_result['video_info'],
+        'chat_data': {
+            'messages': chat_result['messages'],
+            'count': chat_result['count']
+        }
     })
 
 @app.route('/api/export-csv', methods=['POST'])
@@ -172,8 +126,13 @@ def export_csv():
 
     # Write data
     for msg in messages:
+        # Format timestamp
+        timestamp = msg.get('timestamp', 0)
+        if isinstance(timestamp, (int, float)):
+            timestamp = datetime.fromtimestamp(timestamp / 1000000).isoformat()
+
         writer.writerow([
-            msg['timestamp'],
+            timestamp,
             msg['author'],
             msg['message'],
             msg.get('is_verified', False),
@@ -414,7 +373,6 @@ def generate_youtube_style_html(messages, video_info):
 
         <div class="stats">
             <div class="stat"><strong>{len(messages)}</strong> messages</div>
-            <div class="stat">Published: <strong>{video_info.get('published_at', 'Unknown')}</strong></div>
         </div>
 
         <div class="chat-container">
@@ -422,11 +380,16 @@ def generate_youtube_style_html(messages, video_info):
 
     for msg in messages:
         # Format timestamp
+        timestamp = msg.get('timestamp', 0)
         try:
-            timestamp = datetime.fromisoformat(msg['timestamp'].replace('Z', '+00:00'))
-            time_str = timestamp.strftime('%H:%M:%S')
+            if isinstance(timestamp, (int, float)):
+                # Convert microseconds to datetime
+                dt = datetime.fromtimestamp(timestamp / 1000000)
+                time_str = dt.strftime('%H:%M:%S')
+            else:
+                time_str = str(timestamp)
         except:
-            time_str = msg['timestamp']
+            time_str = str(timestamp)
 
         # Determine author class and badges
         author_class = "author"
