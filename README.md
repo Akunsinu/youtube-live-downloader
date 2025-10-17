@@ -9,7 +9,7 @@ A web application that allows you to download chat replays from YouTube Live str
 - Export chat as CSV (with timestamps, authors, and message content)
 - Export chat as YouTube-style HTML (preserves chat formatting and badges)
 - Docker support for easy deployment on Unraid or any Docker host
-- No API key required - uses chat-downloader library
+- No API key required - uses yt-dlp for reliable chat extraction
 
 ## Prerequisites
 
@@ -168,7 +168,8 @@ Feel free to open issues or submit pull requests for improvements.
 ## Notes
 
 - This tool works with archived/completed live streams that have chat replay enabled
-- Chat messages are fetched using the chat-downloader library
+- Chat messages are fetched using yt-dlp, which is actively maintained and reliable
 - Export files are generated on-demand and not stored on the server
 - All processing happens on your server, keeping your data private
 - No YouTube API key required
+- Supports all standard chat message types including Super Chats and memberships

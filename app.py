@@ -1,9 +1,11 @@
 import os
 import csv
 import re
+import json
+import subprocess
+import tempfile
 from io import StringIO, BytesIO
 from flask import Flask, render_template, request, jsonify, send_file
-from chat_downloader import ChatDownloader
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -26,72 +28,148 @@ def extract_video_id(url):
     return None
 
 def get_live_chat_messages(url):
-    """Fetch live chat messages from a YouTube video using chat-downloader"""
+    """Fetch live chat messages from a YouTube video using yt-dlp"""
     try:
         print(f"Attempting to download chat from: {url}")
-        chat_downloader = ChatDownloader()
 
-        # Get chat messages with additional error handling
-        # Try without specifying message_types first (let it get all types)
-        chat = chat_downloader.get_chat(
-            url,
-            max_attempts=5
-        )
+        # Create a temporary directory for the chat file
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_template = os.path.join(temp_dir, 'chat')
 
-        messages = []
-        video_title = None
-        channel_name = None
-        message_count = 0
+            # Use yt-dlp to download live chat
+            cmd = [
+                'yt-dlp',
+                '--write-subs',
+                '--sub-lang', 'live_chat',
+                '--skip-download',
+                '--output', output_template,
+                url
+            ]
 
-        for message in chat:
-            # Extract video info from first message if available
-            if video_title is None and 'video' in message:
-                video_title = message.get('video', {}).get('title', 'Unknown')
-                channel_name = message.get('video', {}).get('author', 'Unknown')
+            print(f"Running command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
-            # Process message
-            message_data = {
-                'timestamp': message.get('timestamp', 0),
-                'author': message.get('author', {}).get('name', 'Unknown'),
-                'message': message.get('message', ''),
-                'author_channel_id': message.get('author', {}).get('id', ''),
-                'is_verified': message.get('author', {}).get('is_verified', False),
-                'is_chat_owner': message.get('author', {}).get('is_owner', False),
-                'is_chat_sponsor': message.get('author', {}).get('is_member', False),
-                'is_chat_moderator': message.get('author', {}).get('is_moderator', False)
-            }
-            messages.append(message_data)
-            message_count += 1
+            if result.returncode != 0:
+                print(f"yt-dlp error: {result.stderr}")
+                return {
+                    'error': f'Failed to download chat. Please ensure the video has chat replay enabled. Error: {result.stderr[:200]}'
+                }
 
-        # Check if we got any messages
-        if message_count == 0:
+            # Find the generated chat file
+            chat_file = None
+            for file in os.listdir(temp_dir):
+                if 'live_chat' in file and file.endswith('.json'):
+                    chat_file = os.path.join(temp_dir, file)
+                    break
+
+            if not chat_file or not os.path.exists(chat_file):
+                return {
+                    'error': 'No chat replay found. This video may not have chat replay enabled.'
+                }
+
+            # Parse the chat file
+            with open(chat_file, 'r', encoding='utf-8') as f:
+                chat_data = json.load(f)
+
+            # Get video info from yt-dlp
+            info_cmd = ['yt-dlp', '--dump-json', '--skip-download', url]
+            info_result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+
+            video_title = 'Unknown'
+            channel_name = 'Unknown'
+
+            if info_result.returncode == 0:
+                try:
+                    video_info_data = json.loads(info_result.stdout)
+                    video_title = video_info_data.get('title', 'Unknown')
+                    channel_name = video_info_data.get('uploader', 'Unknown')
+                except:
+                    pass
+
+            # Process messages
+            messages = []
+
+            for action in chat_data.get('actions', []):
+                # Handle different action types
+                if 'addChatItemAction' in action:
+                    item = action['addChatItemAction'].get('item', {})
+                elif 'replayChatItemAction' in action:
+                    item_actions = action['replayChatItemAction'].get('actions', [])
+                    if not item_actions:
+                        continue
+                    item = item_actions[0].get('addChatItemAction', {}).get('item', {})
+                else:
+                    continue
+
+                # Extract message data
+                renderer = item.get('liveChatTextMessageRenderer') or \
+                          item.get('liveChatPaidMessageRenderer') or \
+                          item.get('liveChatMembershipItemRenderer')
+
+                if not renderer:
+                    continue
+
+                # Get timestamp
+                timestamp_usec = int(renderer.get('timestampUsec', 0))
+
+                # Get author info
+                author_name = renderer.get('authorName', {}).get('simpleText', 'Unknown')
+                author_channel_id = renderer.get('authorExternalChannelId', '')
+
+                # Get message text
+                message_text = ''
+                if 'message' in renderer:
+                    message_runs = renderer['message'].get('runs', [])
+                    message_text = ''.join([run.get('text', '') for run in message_runs])
+
+                # Get badges
+                badges = renderer.get('authorBadges', [])
+                is_verified = any('verifiedBadge' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '')
+                                 for badge in badges)
+                is_moderator = any('moderator' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
+                                  for badge in badges)
+                is_owner = any('owner' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
+                              for badge in badges)
+                is_member = any('member' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
+                               for badge in badges)
+
+                message_data = {
+                    'timestamp': timestamp_usec,
+                    'author': author_name,
+                    'message': message_text,
+                    'author_channel_id': author_channel_id,
+                    'is_verified': is_verified,
+                    'is_chat_owner': is_owner,
+                    'is_chat_sponsor': is_member,
+                    'is_chat_moderator': is_moderator
+                }
+
+                messages.append(message_data)
+
+            if len(messages) == 0:
+                return {
+                    'error': 'No chat messages found in the downloaded data. The chat may be empty or disabled.'
+                }
+
+            print(f"Successfully extracted {len(messages)} messages")
+
             return {
-                'error': 'No chat messages found. This video may not have chat replay enabled, or chat may have been disabled by the creator.'
+                'messages': messages,
+                'count': len(messages),
+                'video_info': {
+                    'title': video_title,
+                    'channel': channel_name,
+                    'description': '',
+                    'published_at': ''
+                }
             }
 
-        # Get video info
-        video_info = {
-            'title': video_title or 'Unknown',
-            'channel': channel_name or 'Unknown',
-            'description': '',
-            'published_at': ''
-        }
-
-        return {
-            'messages': messages,
-            'count': len(messages),
-            'video_info': video_info
-        }
-
-    except ValueError as e:
-        error_msg = str(e)
-        if 'Unable to parse' in error_msg:
-            return {
-                'error': 'Unable to access chat data. Please check that: (1) The video is a completed live stream, (2) Chat replay is enabled, (3) The video is not age-restricted or private.'
-            }
-        return {'error': f'Chat download error: {error_msg}'}
+    except subprocess.TimeoutExpired:
+        return {'error': 'Download timed out. The video may be too long or the connection is slow.'}
     except Exception as e:
         print(f"An error occurred: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {'error': f'Failed to fetch chat: {str(e)}'}
 
 @app.route('/')
