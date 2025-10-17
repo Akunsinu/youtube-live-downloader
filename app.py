@@ -67,9 +67,21 @@ def get_live_chat_messages(url):
                     'error': 'No chat replay found. This video may not have chat replay enabled.'
                 }
 
-            # Parse the chat file
+            # Parse the chat file (JSON Lines format - one JSON object per line)
+            all_actions = []
             with open(chat_file, 'r', encoding='utf-8') as f:
-                chat_data = json.load(f)
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        # Each line contains actions array
+                        if 'replayChatItemAction' in data:
+                            all_actions.append(data)
+                    except json.JSONDecodeError as e:
+                        print(f"Skipping invalid JSON line: {e}")
+                        continue
 
             # Get video info from yt-dlp
             info_cmd = ['yt-dlp', '--dump-json', '--skip-download', url]
@@ -89,62 +101,66 @@ def get_live_chat_messages(url):
             # Process messages
             messages = []
 
-            for action in chat_data.get('actions', []):
-                # Handle different action types
-                if 'addChatItemAction' in action:
-                    item = action['addChatItemAction'].get('item', {})
-                elif 'replayChatItemAction' in action:
-                    item_actions = action['replayChatItemAction'].get('actions', [])
-                    if not item_actions:
+            for action in all_actions:
+                # Handle replayChatItemAction
+                if 'replayChatItemAction' not in action:
+                    continue
+
+                item_actions = action['replayChatItemAction'].get('actions', [])
+                if not item_actions:
+                    continue
+
+                for item_action in item_actions:
+                    # Get the actual chat item
+                    if 'addChatItemAction' not in item_action:
                         continue
-                    item = item_actions[0].get('addChatItemAction', {}).get('item', {})
-                else:
-                    continue
 
-                # Extract message data
-                renderer = item.get('liveChatTextMessageRenderer') or \
-                          item.get('liveChatPaidMessageRenderer') or \
-                          item.get('liveChatMembershipItemRenderer')
+                    item = item_action['addChatItemAction'].get('item', {})
 
-                if not renderer:
-                    continue
+                    # Extract message data from different renderer types
+                    renderer = item.get('liveChatTextMessageRenderer') or \
+                              item.get('liveChatPaidMessageRenderer') or \
+                              item.get('liveChatMembershipItemRenderer')
 
-                # Get timestamp
-                timestamp_usec = int(renderer.get('timestampUsec', 0))
+                    if not renderer:
+                        continue
 
-                # Get author info
-                author_name = renderer.get('authorName', {}).get('simpleText', 'Unknown')
-                author_channel_id = renderer.get('authorExternalChannelId', '')
+                    # Get timestamp
+                    timestamp_usec = int(renderer.get('timestampUsec', 0))
 
-                # Get message text
-                message_text = ''
-                if 'message' in renderer:
-                    message_runs = renderer['message'].get('runs', [])
-                    message_text = ''.join([run.get('text', '') for run in message_runs])
+                    # Get author info
+                    author_name = renderer.get('authorName', {}).get('simpleText', 'Unknown')
+                    author_channel_id = renderer.get('authorExternalChannelId', '')
 
-                # Get badges
-                badges = renderer.get('authorBadges', [])
-                is_verified = any('verifiedBadge' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '')
-                                 for badge in badges)
-                is_moderator = any('moderator' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
+                    # Get message text
+                    message_text = ''
+                    if 'message' in renderer:
+                        message_runs = renderer['message'].get('runs', [])
+                        message_text = ''.join([run.get('text', '') for run in message_runs])
+
+                    # Get badges
+                    badges = renderer.get('authorBadges', [])
+                    is_verified = any('verifiedBadge' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '')
+                                     for badge in badges)
+                    is_moderator = any('moderator' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
+                                      for badge in badges)
+                    is_owner = any('owner' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
                                   for badge in badges)
-                is_owner = any('owner' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
-                              for badge in badges)
-                is_member = any('member' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
-                               for badge in badges)
+                    is_member = any('member' in badge.get('liveChatAuthorBadgeRenderer', {}).get('icon', {}).get('iconType', '').lower()
+                                   for badge in badges)
 
-                message_data = {
-                    'timestamp': timestamp_usec,
-                    'author': author_name,
-                    'message': message_text,
-                    'author_channel_id': author_channel_id,
-                    'is_verified': is_verified,
-                    'is_chat_owner': is_owner,
-                    'is_chat_sponsor': is_member,
-                    'is_chat_moderator': is_moderator
-                }
+                    message_data = {
+                        'timestamp': timestamp_usec,
+                        'author': author_name,
+                        'message': message_text,
+                        'author_channel_id': author_channel_id,
+                        'is_verified': is_verified,
+                        'is_chat_owner': is_owner,
+                        'is_chat_sponsor': is_member,
+                        'is_chat_moderator': is_moderator
+                    }
 
-                messages.append(message_data)
+                    messages.append(message_data)
 
             if len(messages) == 0:
                 return {
