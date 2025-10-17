@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Live Chat Downloader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Roboto", "Arial", sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: #fff;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        button {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-fetch {
+            background-color: #667eea;
+            color: #fff;
+        }
+
+        .btn-fetch:hover {
+            background-color: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-csv, .btn-html {
+            background-color: #48bb78;
+            color: #fff;
+            display: none;
+        }
+
+        .btn-csv:hover, .btn-html:hover {
+            background-color: #38a169;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 187, 120, 0.4);
+        }
+
+        .btn-html {
+            background-color: #ed8936;
+        }
+
+        .btn-html:hover {
+            background-color: #dd6b20;
+            box-shadow: 0 4px 12px rgba(237, 137, 54, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .status {
+            margin-top: 20px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .status.error {
+            background-color: #fed7d7;
+            color: #c53030;
+            border: 1px solid #fc8181;
+        }
+
+        .status.success {
+            background-color: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .status.info {
+            background-color: #bee3f8;
+            color: #2c5282;
+            border: 1px solid #90cdf4;
+        }
+
+        .video-info {
+            display: none;
+            margin-top: 20px;
+            padding: 16px;
+            background-color: #f7fafc;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .video-info h3 {
+            color: #2d3748;
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .video-info p {
+            color: #4a5568;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .video-info .channel {
+            color: #718096;
+            font-size: 13px;
+        }
+
+        .loader {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .example {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube Live Chat Downloader</h1>
+        <p class="subtitle">Download chat replays from YouTube Live streams</p>
+
+        <div class="input-group">
+            <label for="videoUrl">YouTube Video URL</label>
+            <input
+                type="text"
+                id="videoUrl"
+                placeholder="https://www.youtube.com/watch?v=..."
+                autocomplete="off"
+            >
+            <div class="example">Example: https://www.youtube.com/watch?v=dQw4w9WgXcQ</div>
+        </div>
+
+        <div class="button-group">
+            <button class="btn-fetch" onclick="fetchChat()">Fetch Chat</button>
+        </div>
+
+        <div class="button-group" id="exportButtons" style="display: none;">
+            <button class="btn-csv" onclick="exportCSV()">Download CSV</button>
+            <button class="btn-html" onclick="exportHTML()">Download HTML</button>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="video-info" id="videoInfo"></div>
+    </div>
+
+    <script>
+        let chatData = null;
+        let videoInfo = null;
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+        }
+
+        function hideStatus() {
+            document.getElementById('status').style.display = 'none';
+        }
+
+        function showVideoInfo(info, messageCount) {
+            const videoInfoDiv = document.getElementById('videoInfo');
+            videoInfoDiv.innerHTML = `
+                <h3>${info.title}</h3>
+                <p class="channel">by ${info.channel}</p>
+                <p style="margin-top: 8px;"><strong>${messageCount}</strong> chat messages found</p>
+            `;
+            videoInfoDiv.style.display = 'block';
+        }
+
+        function hideVideoInfo() {
+            document.getElementById('videoInfo').style.display = 'none';
+        }
+
+        function showExportButtons() {
+            document.getElementById('exportButtons').style.display = 'flex';
+        }
+
+        function hideExportButtons() {
+            document.getElementById('exportButtons').style.display = 'none';
+        }
+
+        async function fetchChat() {
+            const urlInput = document.getElementById('videoUrl');
+            const url = urlInput.value.trim();
+
+            if (!url) {
+                showStatus('Please enter a YouTube URL', 'error');
+                return;
+            }
+
+            // Disable button and show loading
+            const fetchBtn = document.querySelector('.btn-fetch');
+            fetchBtn.disabled = true;
+            fetchBtn.innerHTML = 'Fetching...<span class="loader"></span>';
+
+            hideStatus();
+            hideVideoInfo();
+            hideExportButtons();
+            chatData = null;
+            videoInfo = null;
+
+            try {
+                const response = await fetch('/api/fetch-chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to fetch chat');
+                }
+
+                chatData = data.chat_data.messages;
+                videoInfo = data.video_info;
+
+                showStatus(`Successfully fetched ${data.chat_data.count} messages!`, 'success');
+                showVideoInfo(videoInfo, data.chat_data.count);
+                showExportButtons();
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                fetchBtn.disabled = false;
+                fetchBtn.innerHTML = 'Fetch Chat';
+            }
+        }
+
+        async function exportCSV() {
+            if (!chatData || !videoInfo) {
+                showStatus('No chat data available. Please fetch chat first.', 'error');
+                return;
+            }
+
+            const csvBtn = document.querySelector('.btn-csv');
+            csvBtn.disabled = true;
+            csvBtn.innerHTML = 'Downloading...<span class="loader"></span>';
+
+            try {
+                const response = await fetch('/api/export-csv', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        messages: chatData,
+                        video_info: videoInfo
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to export CSV');
+                }
+
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `${videoInfo.title.replace(/[^a-z0-9]/gi, '_')}_chat.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(downloadUrl);
+                document.body.removeChild(a);
+
+                showStatus('CSV downloaded successfully!', 'success');
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                csvBtn.disabled = false;
+                csvBtn.innerHTML = 'Download CSV';
+            }
+        }
+
+        async function exportHTML() {
+            if (!chatData || !videoInfo) {
+                showStatus('No chat data available. Please fetch chat first.', 'error');
+                return;
+            }
+
+            const htmlBtn = document.querySelector('.btn-html');
+            htmlBtn.disabled = true;
+            htmlBtn.innerHTML = 'Downloading...<span class="loader"></span>';
+
+            try {
+                const response = await fetch('/api/export-html', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        messages: chatData,
+                        video_info: videoInfo
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to export HTML');
+                }
+
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `${videoInfo.title.replace(/[^a-z0-9]/gi, '_')}_chat.html`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(downloadUrl);
+                document.body.removeChild(a);
+
+                showStatus('HTML downloaded successfully!', 'success');
+
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                htmlBtn.disabled = false;
+                htmlBtn.innerHTML = 'Download HTML';
+            }
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('videoUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                fetchChat();
+            }
+        });
+    </script>
+</body>
+</html>
