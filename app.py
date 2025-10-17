@@ -28,13 +28,14 @@ def extract_video_id(url):
 def get_live_chat_messages(url):
     """Fetch live chat messages from a YouTube video using chat-downloader"""
     try:
+        print(f"Attempting to download chat from: {url}")
         chat_downloader = ChatDownloader()
 
         # Get chat messages with additional error handling
+        # Try without specifying message_types first (let it get all types)
         chat = chat_downloader.get_chat(
             url,
-            message_types=['text_message', 'paid_message', 'paid_sticker'],
-            max_attempts=3
+            max_attempts=5
         )
 
         messages = []
