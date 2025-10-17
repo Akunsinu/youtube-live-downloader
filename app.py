@@ -4,7 +4,9 @@ import re
 import json
 import subprocess
 import tempfile
+import html as html_module
 from io import StringIO, BytesIO
+from collections import Counter
 from flask import Flask, render_template, request, jsonify, send_file
 from dotenv import load_dotenv
 from datetime import datetime
@@ -286,7 +288,7 @@ def export_html():
         return jsonify({'error': 'No messages to export'}), 400
 
     # Generate HTML
-    html_content = generate_youtube_style_html(messages, video_info)
+    html_content = generate_youtube_style_html_with_analytics(messages, video_info)
 
     video_title = video_info.get('title', 'chat').replace(' ', '_')
     filename = f"{video_title}_chat.html"
@@ -298,8 +300,26 @@ def export_html():
         download_name=filename
     )
 
-def generate_youtube_style_html(messages, video_info):
-    """Generate YouTube-style HTML for chat messages"""
+def generate_youtube_style_html_with_analytics(messages, video_info):
+    """Generate YouTube-style HTML for chat messages with search and analytics"""
+
+    # Calculate analytics
+    total_messages = len(messages)
+    unique_chatters = len(set(msg['author'] for msg in messages))
+
+    # Count messages per author
+    author_counts = Counter(msg['author'] for msg in messages)
+    top_chatters = author_counts.most_common(10)
+
+    # Count badges
+    owner_count = sum(1 for msg in messages if msg.get('is_chat_owner', False))
+    mod_count = sum(1 for msg in messages if msg.get('is_chat_moderator', False))
+    member_count = sum(1 for msg in messages if msg.get('is_chat_sponsor', False))
+    verified_count = sum(1 for msg in messages if msg.get('is_verified', False))
+
+    # Convert messages to JSON for JavaScript
+    messages_json = json.dumps(messages)
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -321,7 +341,7 @@ def generate_youtube_style_html(messages, video_info):
         }}
 
         .container {{
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }}
 
@@ -342,22 +362,124 @@ def generate_youtube_style_html(messages, video_info):
             font-size: 14px;
         }}
 
-        .stats {{
+        .controls {{
             background-color: #212121;
             padding: 15px 20px;
             border-radius: 12px;
             margin-bottom: 20px;
-            display: flex;
-            gap: 30px;
         }}
 
-        .stat {{
-            color: #aaa;
+        .search-box {{
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }}
+
+        .search-box input {{
+            flex: 1;
+            padding: 10px 15px;
+            background-color: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            color: #fff;
             font-size: 14px;
         }}
 
-        .stat strong {{
+        .search-box input:focus {{
+            outline: none;
+            border-color: #667eea;
+        }}
+
+        .search-box button {{
+            padding: 10px 20px;
+            background-color: #667eea;
+            border: none;
+            border-radius: 8px;
             color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+        }}
+
+        .search-box button:hover {{
+            background-color: #5568d3;
+        }}
+
+        .search-stats {{
+            color: #aaa;
+            font-size: 13px;
+        }}
+
+        .main-content {{
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+        }}
+
+        .analytics-panel {{
+            background-color: #212121;
+            border-radius: 12px;
+            padding: 20px;
+            height: fit-content;
+            position: sticky;
+            top: 20px;
+        }}
+
+        .analytics-section {{
+            margin-bottom: 25px;
+        }}
+
+        .analytics-section:last-child {{
+            margin-bottom: 0;
+        }}
+
+        .analytics-section h3 {{
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #667eea;
+        }}
+
+        .stat-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #2a2a2a;
+        }}
+
+        .stat-item:last-child {{
+            border-bottom: none;
+        }}
+
+        .stat-label {{
+            color: #aaa;
+            font-size: 13px;
+        }}
+
+        .stat-value {{
+            color: #fff;
+            font-weight: 500;
+            font-size: 13px;
+        }}
+
+        .top-chatter {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            font-size: 12px;
+        }}
+
+        .top-chatter-name {{
+            color: #fff;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+
+        .top-chatter-count {{
+            color: #667eea;
+            font-weight: 500;
+            margin-left: 10px;
         }}
 
         .chat-container {{
@@ -377,6 +499,14 @@ def generate_youtube_style_html(messages, video_info):
 
         .chat-message:hover {{
             background-color: #2a2a2a;
+        }}
+
+        .chat-message.hidden {{
+            display: none;
+        }}
+
+        .chat-message.highlight {{
+            background-color: #3a3a00;
         }}
 
         .avatar {{
@@ -477,6 +607,13 @@ def generate_youtube_style_html(messages, video_info):
             margin-bottom: 4px;
         }}
 
+        .highlight-text {{
+            background-color: #ffd600;
+            color: #000;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }}
+
         /* Scrollbar styling */
         .chat-container::-webkit-scrollbar {{
             width: 8px;
@@ -494,6 +631,16 @@ def generate_youtube_style_html(messages, video_info):
         .chat-container::-webkit-scrollbar-thumb:hover {{
             background: #909090;
         }}
+
+        @media (max-width: 1024px) {{
+            .main-content {{
+                grid-template-columns: 1fr;
+            }}
+
+            .analytics-panel {{
+                position: static;
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -503,21 +650,79 @@ def generate_youtube_style_html(messages, video_info):
             <div class="channel">{video_info.get('channel', 'Unknown Channel')}</div>
         </div>
 
-        <div class="stats">
-            <div class="stat"><strong>{len(messages)}</strong> messages</div>
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search messages, usernames...">
+                <button onclick="searchMessages()">Search</button>
+                <button onclick="clearSearch()" style="background-color: #3a3a3a;">Clear</button>
+            </div>
+            <div class="search-stats" id="searchStats">Showing all {total_messages} messages</div>
         </div>
 
-        <div class="chat-container">
+        <div class="main-content">
+            <div class="analytics-panel">
+                <div class="analytics-section">
+                    <h3>📊 Overview</h3>
+                    <div class="stat-item">
+                        <span class="stat-label">Total Messages</span>
+                        <span class="stat-value">{total_messages:,}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Unique Chatters</span>
+                        <span class="stat-value">{unique_chatters:,}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Avg. msgs/user</span>
+                        <span class="stat-value">{total_messages / max(unique_chatters, 1):.1f}</span>
+                    </div>
+                </div>
+
+                <div class="analytics-section">
+                    <h3>🏅 Badges</h3>
+                    <div class="stat-item">
+                        <span class="stat-label">👑 Owners</span>
+                        <span class="stat-value">{owner_count}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">🛡️ Moderators</span>
+                        <span class="stat-value">{mod_count}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">💎 Members</span>
+                        <span class="stat-value">{member_count}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">✓ Verified</span>
+                        <span class="stat-value">{verified_count}</span>
+                    </div>
+                </div>
+
+                <div class="analytics-section">
+                    <h3>🔥 Top Chatters</h3>
 """
 
+    for i, (author, count) in enumerate(top_chatters, 1):
+        html += f"""                    <div class="top-chatter">
+                        <span class="top-chatter-name">{i}. {author}</span>
+                        <span class="top-chatter-count">{count}</span>
+                    </div>
+"""
+
+    html += """                </div>
+            </div>
+
+            <div class="chat-container" id="chatContainer">
+"""
+
+    # Generate chat messages
     for msg in messages:
         # Format timestamp
+        from datetime import datetime as dt
         timestamp = msg.get('timestamp', 0)
         try:
             if isinstance(timestamp, (int, float)):
-                # Convert microseconds to datetime
-                dt = datetime.fromtimestamp(timestamp / 1000000)
-                time_str = dt.strftime('%H:%M:%S')
+                dt_obj = dt.fromtimestamp(timestamp / 1000000)
+                time_str = dt_obj.strftime('%H:%M:%S')
             else:
                 time_str = str(timestamp)
         except:
@@ -541,29 +746,95 @@ def generate_youtube_style_html(messages, video_info):
             author_class += " verified"
 
         badges_html = ''.join(badges)
-
-        # Get avatar URL
         avatar_url = msg.get('avatar_url', '')
 
-        html += f"""            <div class="chat-message">
-                <div class="timestamp">{time_str}</div>
-                <img src="{avatar_url}" alt="{msg['author']}" class="avatar" loading="lazy">
-                <div class="message-content">
-                    <div class="author-line">
-                        {badges_html}
-                        <span class="{author_class}">{msg['author']}</span>
+        # Escape HTML in message and author
+        import html as html_module
+        author_escaped = html_module.escape(msg['author'])
+        message_escaped = html_module.escape(msg['message'])
+
+        html += f"""                <div class="chat-message" data-author="{author_escaped.lower()}" data-message="{message_escaped.lower()}">
+                    <div class="timestamp">{time_str}</div>
+                    <img src="{avatar_url}" alt="{author_escaped}" class="avatar" loading="lazy">
+                    <div class="message-content">
+                        <div class="author-line">
+                            {badges_html}
+                            <span class="{author_class}">{author_escaped}</span>
+                        </div>
+                        <div class="message">{message_escaped}</div>
                     </div>
-                    <div class="message">{msg['message']}</div>
                 </div>
-            </div>
 """
 
-    html += """        </div>
+    html += f"""            </div>
+        </div>
     </div>
+
+    <script>
+        const allMessages = {messages_json};
+        let currentFilter = '';
+
+        function searchMessages() {{
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+            currentFilter = searchTerm;
+
+            if (!searchTerm) {{
+                clearSearch();
+                return;
+            }}
+
+            const messages = document.querySelectorAll('.chat-message');
+            let visibleCount = 0;
+
+            messages.forEach(msg => {{
+                const author = msg.dataset.author || '';
+                const message = msg.dataset.message || '';
+
+                if (author.includes(searchTerm) || message.includes(searchTerm)) {{
+                    msg.classList.remove('hidden');
+                    msg.classList.add('highlight');
+                    visibleCount++;
+                }} else {{
+                    msg.classList.add('hidden');
+                    msg.classList.remove('highlight');
+                }}
+            }});
+
+            document.getElementById('searchStats').textContent =
+                `Showing ${{visibleCount}} of {total_messages} messages matching "${{searchTerm}}"`;
+        }}
+
+        function clearSearch() {{
+            currentFilter = '';
+            document.getElementById('searchInput').value = '';
+
+            const messages = document.querySelectorAll('.chat-message');
+            messages.forEach(msg => {{
+                msg.classList.remove('hidden');
+                msg.classList.remove('highlight');
+            }});
+
+            document.getElementById('searchStats').textContent =
+                'Showing all {total_messages} messages';
+        }}
+
+        // Allow Enter key to search
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {{
+            if (e.key === 'Enter') {{
+                searchMessages();
+            }}
+        }});
+
+        // Real-time search (optional)
+        document.getElementById('searchInput').addEventListener('input', function() {{
+            if (this.value.trim() === '') {{
+                clearSearch();
+            }}
+        }});
+    </script>
 </body>
 </html>"""
 
     return html
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
