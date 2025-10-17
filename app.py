@@ -132,6 +132,13 @@ def get_live_chat_messages(url):
                     author_name = renderer.get('authorName', {}).get('simpleText', 'Unknown')
                     author_channel_id = renderer.get('authorExternalChannelId', '')
 
+                    # Get author avatar (use highest quality available)
+                    author_photo = renderer.get('authorPhoto', {}).get('thumbnails', [])
+                    avatar_url = ''
+                    if author_photo:
+                        # Get the last thumbnail (usually highest quality)
+                        avatar_url = author_photo[-1].get('url', '')
+
                     # Get message text
                     message_text = ''
                     if 'message' in renderer:
@@ -154,6 +161,7 @@ def get_live_chat_messages(url):
                         'author': author_name,
                         'message': message_text,
                         'author_channel_id': author_channel_id,
+                        'avatar_url': avatar_url,
                         'is_verified': is_verified,
                         'is_chat_owner': is_owner,
                         'is_chat_sponsor': is_member,
@@ -364,10 +372,19 @@ def generate_youtube_style_html(messages, video_info):
             display: flex;
             padding: 8px 0;
             align-items: flex-start;
+            gap: 12px;
         }}
 
         .chat-message:hover {{
             background-color: #2a2a2a;
+        }}
+
+        .avatar {{
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
         }}
 
         .timestamp {{
@@ -375,6 +392,7 @@ def generate_youtube_style_html(messages, video_info):
             font-size: 12px;
             min-width: 80px;
             margin-right: 15px;
+            flex-shrink: 0;
         }}
 
         .author {{
@@ -524,8 +542,12 @@ def generate_youtube_style_html(messages, video_info):
 
         badges_html = ''.join(badges)
 
+        # Get avatar URL
+        avatar_url = msg.get('avatar_url', '')
+
         html += f"""            <div class="chat-message">
                 <div class="timestamp">{time_str}</div>
+                <img src="{avatar_url}" alt="{msg['author']}" class="avatar" loading="lazy">
                 <div class="message-content">
                     <div class="author-line">
                         {badges_html}
