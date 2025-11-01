@@ -29,6 +29,40 @@ def extract_video_id(url):
             return match.group(1)
     return None
 
+def sanitize_filename(text):
+    """Remove or replace characters that are problematic in filenames"""
+    # Replace problematic characters with underscores
+    problematic_chars = r'[<>:"/\\|?*]'
+    sanitized = re.sub(problematic_chars, '_', text)
+    # Keep spaces as is (don't replace them)
+    # Remove multiple consecutive underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Remove leading/trailing underscores and spaces
+    sanitized = sanitized.strip('_ ')
+    # Limit length to avoid filesystem issues (keep it reasonable)
+    max_length = 100
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip('_ ')
+    return sanitized
+
+def generate_filename(video_info, message_count, file_extension):
+    """Generate filename in format: YT_Live_Chat_{YYYYMMDD}_{count}_{title}.{ext}"""
+    # Get video date in YYYYMMDD format, fallback to current date if not available
+    video_date = video_info.get('upload_date')
+    if video_date:
+        date_str = video_date
+    else:
+        date_str = datetime.now().strftime('%Y%m%d')
+
+    # Get and sanitize video title
+    video_title = video_info.get('title', 'Unknown')
+    sanitized_title = sanitize_filename(video_title)
+
+    # Build filename
+    filename = f"YT_Live_Chat_{date_str}_{message_count}_{sanitized_title}.{file_extension}"
+
+    return filename
+
 def get_live_chat_messages(url):
     """Fetch live chat messages from a YouTube video using yt-dlp"""
     try:
@@ -91,12 +125,18 @@ def get_live_chat_messages(url):
 
             video_title = 'Unknown'
             channel_name = 'Unknown'
+            video_date = None
 
             if info_result.returncode == 0:
                 try:
                     video_info_data = json.loads(info_result.stdout)
                     video_title = video_info_data.get('title', 'Unknown')
                     channel_name = video_info_data.get('uploader', 'Unknown')
+                    # Get upload date (format: YYYYMMDD) or timestamp
+                    video_date = video_info_data.get('upload_date')
+                    if not video_date and 'timestamp' in video_info_data:
+                        # Fallback to timestamp if upload_date not available
+                        video_date = datetime.fromtimestamp(video_info_data['timestamp']).strftime('%Y%m%d')
                 except:
                     pass
 
@@ -186,7 +226,8 @@ def get_live_chat_messages(url):
                     'title': video_title,
                     'channel': channel_name,
                     'description': '',
-                    'published_at': ''
+                    'published_at': '',
+                    'upload_date': video_date
                 }
             }
 
@@ -267,8 +308,7 @@ def export_csv():
 
     # Prepare file for download
     output.seek(0)
-    video_title = video_info.get('title', 'chat').replace(' ', '_')
-    filename = f"{video_title}_chat.csv"
+    filename = generate_filename(video_info, len(messages), 'csv')
 
     return send_file(
         BytesIO(output.getvalue().encode('utf-8')),
@@ -290,8 +330,7 @@ def export_html():
     # Generate HTML
     html_content = generate_youtube_style_html_with_analytics(messages, video_info)
 
-    video_title = video_info.get('title', 'chat').replace(' ', '_')
-    filename = f"{video_title}_chat.html"
+    filename = generate_filename(video_info, len(messages), 'html')
 
     return send_file(
         BytesIO(html_content.encode('utf-8')),
